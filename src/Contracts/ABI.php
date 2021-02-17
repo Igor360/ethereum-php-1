@@ -12,257 +12,181 @@
 
 declare(strict_types=1);
 
-namespace FurqanSiddiqui\Ethereum\Contracts;
+namespace FurqanSiddiqui\Ethereum\Contracts\ABI;
 
-use Comely\DataTypes\Buffer\Base16;
-use Comely\DataTypes\Strings\ASCII;
-use FurqanSiddiqui\Ethereum\Contracts\ABI\Method;
-use FurqanSiddiqui\Ethereum\Contracts\ABI\MethodParam;
 use FurqanSiddiqui\Ethereum\Exception\ContractABIException;
-use FurqanSiddiqui\Ethereum\Math\Integers;
-use FurqanSiddiqui\Ethereum\Packages\Keccak\Keccak;
 
 /**
- * Class ABI
- * https://github.com/ethereum/wiki/wiki/Ethereum-Contract-ABI
- * @package FurqanSiddiqui\Ethereum\Contracts
+ * Class Method
+ * @package FurqanSiddiqui\Ethereum\Contracts\ABI
  */
-class ABI
+class Method
 {
-    /** @var Method|null */
-    private ?Method $constructor = null;
-    /** @var Method|null */
-    private ?Method $fallback = null;
-    /** @var Method|null */
-    private ?Method $receive = null;
-    /** @var array */
-    private array $functions;
-    /** @var array */
-    private array $events;
-    /** @var bool */
-    private bool $strictMode;
+    /** @var string|null */
+    public ?string $name;
+    /** @var string */
+    public string $type;
+    /** @var bool|null */
+    public ?bool $isConstant;
+    /** @var bool|null */
+    public ?bool $isPayable;
+    /** @var array|null */
+    public ?array $inputs;
+    /** @var array|null */
+    public ?array $outputs;
+
 
     /**
-     * ABI constructor.
-     * @param array $abi
-     */
-    public function __construct(array $abi)
-    {
-        $this->strictMode = true;
-        $this->functions = [];
-        $this->events = [];
-
-        $index = 0;
-        foreach ($abi as $block) {
-            try {
-                if (!is_array($block)) {
-                    throw new ContractABIException(
-                        sprintf('Unexpected data type "%s" at ABI array index %d, expecting Array', gettype($block), $index)
-                    );
-                }
-
-                $type = $block["type"] ?? null;
-                switch ($type) {
-                    case "constructor":
-                    case "function":
-                    case "receive":
-                    case "fallback":
-                        $method = new Method($block);
-                        switch ($method->type) {
-                            case "constructor":
-                                $this->constructor = $method;
-                                break;
-                            case "function":
-                                $this->functions[$method->name] = $method;
-                                break;
-                            case "fallback":
-                                $this->fallback = $method;
-                                break;
-                            case "receive":
-                                $this->receive = $method;
-                                break;
-                        }
-                        break;
-                    case "event":
-                        // Todo: parse events
-                        break;
-                    default:
-                        throw new ContractABIException(
-                            sprintf('Bad/Unexpected value for ABI block param "type" at index %d', $index)
-                        );
-                }
-            } catch (ContractABIException $e) {
-                // Trigger an error instead of throwing exception if a block within ABI fails,
-                // to make sure rest of ABI blocks will work
-                trigger_error(sprintf('[%s] %s', get_class($e), $e->getMessage()));
-            }
-
-            $index++;
-        }
-    }
-
-    /**
-     * @param string $name
-     * @param array|null $args
-     * @return string
+     * Method constructor.
+     * @param array $method
      * @throws ContractABIException
-     * @throws \Exception
      */
-    public function encodeCall(string $name, ?array $args): string
+    public function __construct(array $method)
     {
-        $method = $this->functions[$name] ?? null;
-        if (!$method instanceof Method) {
-            throw new ContractABIException(sprintf('Call method "%s" is undefined in ABI', $name));
+        // Name
+        $name = $method["name"] ?? null;
+        if (!is_string($name) && !is_null($name)) { // Loosened for "constructor" and "fallback"
+            throw new ContractABIException('Unexpected value for param "name"');
         }
 
-        $givenArgs = $args;
-        $givenArgsCount = is_array($givenArgs) ? count($givenArgs) : 0;
-        $methodParams = $method->inputs;
-        $methodParamsCount = is_array($methodParams) ? count($methodParams) : 0;
+        $this->name = $name;
 
-        // Strict mode
-        if ($this->strictMode) {
-            // Params/args count must match
-            if ($methodParamsCount || $givenArgsCount) {
-                if ($methodParamsCount !== $givenArgsCount) {
-                    throw new ContractABIException(
-                        sprintf('Method "%s" requires %d args, given %d', $name, $methodParamsCount, $givenArgsCount)
-                    );
-                }
+        // Type
+        $type = $method["type"];
+        if (!is_string($type) || !in_array($type, ["function", "constructor", "fallback", "receive"])) {
+            throw new ContractABIException(sprintf('Cannot create method for type "%s"', strval($type)));
+        }
+
+        $this->type = $type;
+        if ($this->type === "function") {
+            if (!$this->name) {
+                throw new ContractABIException('ABI method type "function" requires a valid name');
             }
         }
 
-        $encoded = "";
-        $methodParamsTypes = [];
-        for ($i = 0; $i < $methodParamsCount; $i++) {
-            /** @var MethodParam $param */
-            $param = $methodParams[$i];
-            $arg = $givenArgs[$i];
-            $encoded .= $this->encodeArg($param->type, $arg);
-            $methodParamsTypes[] = $param->type;
+        // Constant
+        $isConstant = $method["constant"] ?? null;
+        if (!is_bool($isConstant) && !is_null($isConstant)) {
+            throw $this->unexpectedParamValue("constant", "bool", gettype($isConstant));
         }
 
-        $encodedMethodCall = Keccak::hash(sprintf('%s(%s)', $method->name, implode(",", $methodParamsTypes)), 256);
-        return '0x' . substr($encodedMethodCall, 0, 8) . $encoded;
+        $this->isConstant = $isConstant;
+
+        // Payable
+        $isPayable = $method["payable"] ?? null;
+        if (!is_bool($isPayable) && !is_null($isPayable)) {
+            throw $this->unexpectedParamValue("constant", "bool", gettype($isPayable));
+        }
+
+        $this->isPayable = $isPayable;
+
+        // Inputs
+        $inputs = $method["inputs"] ?? false;
+        if (!is_array($inputs)) { // Must be an Array
+            if (!in_array($this->type, ["fallback", "receive"])) { // ...unless its type "fallback" or "receive"
+                throw $this->unexpectedParamValue("inputs", "array");
+            }
+        }
+
+        $this->inputs = [];
+        if (is_array($inputs)) {
+            $this->inputs = $this->params("inputs", $inputs);
+        }
+
+        // Outputs
+        $this->outputs = null;
+        $outputs = $method["outputs"] ?? false;
+        if (is_array($outputs)) {
+            $this->outputs = $this->params("outputs", $outputs);
+        }
     }
 
     /**
-     * @param string $type
-     * @param $value
-     * @return string
-     * @throws ContractABIException
-     */
-    public function encodeArg(string $type, $value): string
-    {
-        $len = preg_replace('/[^0-9]/', '', $type);
-        if (!$len) {
-            $len = null;
-        }
-
-        $type = preg_replace('/[^a-z]/', '', $type);
-        switch ($type) {
-            case "hash":
-            case "address":
-                if (substr($value, 0, 2) === "0x") {
-                    $value = substr($value, 2);
-                }
-                break;
-            case "uint":
-            case "int":
-                $value = Integers::Pack_UInt_BE($value);
-                break;
-            case "bool":
-                $value = $value === true ? 1 : 0;
-                break;
-            case "string":
-                $value = ASCII::base16Encode($value)->hexits(false);
-                break;
-            default:
-                throw new ContractABIException(sprintf('Cannot encode value of type "%s"', $type));
-        }
-
-        return substr(str_pad(strval($value), 64, "0", STR_PAD_LEFT), 0, 64);
-    }
-
-    /**
-     * @param string $name
-     * @param string $encoded
+     * @param string $which
+     * @param array $params
      * @return array
      * @throws ContractABIException
      */
-    public function decodeResponse(string $name, string $encoded): array
+    private function params(string $which, array $params): array
     {
-        $method = $this->functions[$name] ?? null;
-        if (!$method instanceof Method) {
-            throw new ContractABIException(sprintf('Call method "%s" is undefined in ABI', $name));
-        }
+        $methodId = $this->name ?? $this->type;
+        $result = [];
 
-        // Remove suffix "0x"
-        if (substr($encoded, 0, 2) === '0x') {
-            $encoded = substr($encoded, 2);
-        }
-
-        // Output params
-        $methodResponseParams = $method->outputs ?? [];
-        $methodResponseParamsCount = count($methodResponseParams);
-
-        // What to expect
-        if ($methodResponseParamsCount <= 0) {
-            return [];
-        } elseif ($methodResponseParamsCount === 1) {
-            // Put all in a single chunk
-            $chunks = [$encoded];
-        } else {
-            // Split in chunks of 64 bytes
-            $chunks = str_split($encoded, 64);
-        }
-
-
-        $result = []; // Prepare
-        for ($i = 0; $i < $methodResponseParamsCount; $i++) {
-            /** @var MethodParam $param */
-            $param = $methodResponseParams[$i];
-            $chunk = $chunks[$i];
-            $decoded = $this->decodeArg($param->type, $chunk);
-
-            if ($param->name) {
-                $result[$param->name] = $decoded;
-            } else {
-                $result[] = $decoded;
+        $index = 0;
+        foreach ($params as $param) {
+            if (!is_array($param)) {
+                throw new ContractABIException(
+                    sprintf(
+                        'All "%s" params for method "%s" must be type Array, got "%s" at index %d',
+                        $which,
+                        $methodId,
+                        gettype($param),
+                        $index
+                    )
+                );
             }
+
+            $name = $param["name"] ?? null;
+            if (!is_string($name) || !preg_match('/^\w*$/', $name)) {
+                throw new ContractABIException(
+                    sprintf('Bad value for param "name" of "%s" at index %d', $which, $index)
+                );
+            }
+
+            $type = $param["type"] ?? null;
+            if (!is_string($type) || !preg_match('/^\w+(\[\])?$/', $type)) {
+                throw new ContractABIException(
+                    sprintf('Bad value for param "type" of "%s" at index %d', $which, $index)
+                );
+            }
+
+            if (!preg_match('/^((hash|uint|int|string)(8|16|32|64|128|256)?(\[\])?|bool|address(\[\])?|(bytes)(4|32)?|tuple)$/', $type)) {
+                dd($type);
+                throw new ContractABIException(
+                    sprintf('Invalid/unacceptable type for param "%s" in "%s"', $name, $which)
+                );
+            }
+
+            $methodParam = new MethodParam();
+            $methodParam->name = $name;
+            $methodParam->type = $type;
+            $result[] = $methodParam;
+            $index++;
         }
 
         return $result;
     }
 
     /**
-     * @param string $type
-     * @param string $encoded
-     * @return bool|\Comely\DataTypes\BcNumber|string
-     * @throws ContractABIException
+     * @param string $param
+     * @param null|string $expected
+     * @param null|string $got
+     * @return ContractABIException
      */
-    public function decodeArg(string $type, string $encoded)
+    private function unexpectedParamValue(string $param, ?string $expected = null, ?string $got = null): ContractABIException
     {
-        $len = preg_replace('/[^0-9]/', '', $type);
-        if (!$len) {
-            $len = null;
+        $message = sprintf('Bad/unexpected value for param "%s"', $param);
+        if ($expected) {
+            $message .= sprintf(', expected "%s"', $expected);
         }
-        $type = preg_replace('/[^a-z]/', '', $type);
 
-        $encoded = ltrim($encoded, "0");
-        switch ($type) {
-            case "hash":
-            case "address":
-                return '0x' . $encoded;
-            case "uint":
-            case "int":
-                return Integers::Unpack($encoded)->value();
-            case "bool":
-                return boolval($encoded);
-            case "string":
-                return ASCII::base16Decode(new Base16($encoded));
-            default:
-                throw new ContractABIException(sprintf('Cannot encode value of type "%s"', $type));
+        if ($got) {
+            $message .= sprintf(', got "%s"', $got);
         }
+
+
+        return $this->exception($message);
+    }
+
+    /**
+     * @param string $message
+     * @return ContractABIException
+     */
+    private function exception(string $message): ContractABIException
+    {
+        $methodName = is_string($this->name) ? $this->name : "*unnamed*";
+        return new ContractABIException(
+            sprintf('ABI method [%s]: %s', $methodName, $message)
+        );
     }
 }
