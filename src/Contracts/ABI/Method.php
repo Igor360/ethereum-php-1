@@ -134,13 +134,14 @@ class Method
             }
 
             $type = $param["type"] ?? null;
-            if (!is_string($type) || !preg_match('/^\w+$/', $type)) {
+            if (!is_string($type) || !preg_match('/^\w+(\[\])?$/', $type)) {
                 throw new ContractABIException(
                     sprintf('Bad value for param "type" of "%s" at index %d', $which, $index)
                 );
             }
 
-            if (!preg_match('/^((hash|uint|int|string)(8|16|32|64|128|256)?|bool|address|(bytes)(4|32)?|tuple)$/', $type)) {
+            if (!preg_match('/^((hash|uint|int|string)(8|16|32|64|128|256)?(\[\])?|bool|address(\[\])?|(bytes)(4|32)?|tuple)$/', $type)) {
+                dd($type);
                 throw new ContractABIException(
                     sprintf('Invalid/unacceptable type for param "%s" in "%s"', $name, $which)
                 );
